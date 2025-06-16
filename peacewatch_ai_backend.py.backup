@@ -1,0 +1,213 @@
+from fastapi import FastAPI, File, UploadFile, Form, Request
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from ultralytics import YOLO
+import whisper
+import os
+import tempfile
+from datetime import datetime
+import logging
+from openai import OpenAI
+import uuid
+import cv2
+
+# ✅ Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ✅ Initialize FastAPI
+app = FastAPI()
+
+# ✅ Create necessary directories
+os.makedirs("static/frames", exist_ok=True)
+
+# ✅ Mount static and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="public")
+
+# ✅ Serve frontend
+@app.get("/", response_class=HTMLResponse)
+def serve_frontend(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# ✅ Health check
+@app.get("/api")
+def read_root():
+    return {"message": "PeaceWatch AI Backend is running"}
+
+# ✅ Load models
+vision_model = YOLO("yolov8n.pt")
+speech_model = whisper.load_model("base")
+
+# ✅ Setup OpenAI client
+openai_key = os.getenv("OPENAI_API_KEY")
+if not openai_key:
+    raise RuntimeError("❌ OPENAI_API_KEY is not set in the environment.")
+client = OpenAI(api_key=openai_key)
+
+# ✅ Helper to parse MM:SS string to seconds
+def time_to_seconds(timestr):
+    try:
+        parts = timestr.strip().split(":")
+        if len(parts) == 2:
+            minutes, seconds = map(int, parts)
+            return minutes * 60 + seconds
+        return int(parts[0])
+    except:
+        return 0  # fallback
+
+# ✅ Extract frames from video
+
+def extract_frames(video_path, interval=1.0, max_frames=10, start_time=0.0):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    start_frame = int(start_time * fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+    frame_gap = int(fps * interval)
+    current = start_frame
+    extracted = []
+
+    while cap.isOpened() and len(extracted) < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if (current - start_frame) % frame_gap == 0:
+            uid = str(uuid.uuid4())
+            frame_filename = f"{uid}.jpg"
+            frame_static_path = os.path.join("static", "frames", frame_filename)
+            cv2.imwrite(frame_static_path, frame)
+            extracted.append({
+                "path": "/" + frame_static_path.replace("\\", "/"),
+                "index": current
+            })
+        current += 1
+    cap.release()
+    return extracted
+
+# ✅ Analyze endpoint
+@app.post("/analyze")
+async def analyze(
+    file: UploadFile = File(...),
+    description: str = Form(...),
+    start_time: str = Form("0:00")
+):
+    suffix = os.path.splitext(file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        temp.write(await file.read())
+        temp_path = temp.name
+
+    result_summary = {
+        "description": description,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    try:
+        # 🧠 MEDIA ANALYSIS
+        if suffix.lower() in [".jpg", ".jpeg", ".png"]:
+            result = vision_model(temp_path)[0]
+            labels = result.names
+            detected = []
+            if result.boxes and result.boxes.cls is not None and len(result.boxes.cls) > 0:
+                detected = [labels[int(cls)] for cls in result.boxes.cls]
+            result_summary["image_detections"] = detected
+            logger.info(f"Image detections: {detected}")
+
+        elif suffix.lower() in [".mp4", ".mov", ".avi"]:
+            start_seconds = time_to_seconds(start_time)
+            frame_info_list = extract_frames(temp_path, interval=0.5, max_frames=10, start_time=start_seconds)
+            detected_frames = []
+            all_labels = []
+
+            for frame_info in frame_info_list:
+                frame_path = frame_info["path"].lstrip("/")
+                result = vision_model(frame_path)[0]
+                labels = result.names
+                detected = []
+
+                if result.boxes and result.boxes.cls is not None:
+                    detected = [labels[int(cls)] for cls in result.boxes.cls]
+                    all_labels.extend(detected)
+
+                frame_result = {
+                    "url": frame_info["path"],
+                    "index": frame_info["index"],
+                    "detections": detected
+                }
+                detected_frames.append(frame_result)
+
+            result_summary["video_detections"] = list(set(all_labels))
+            result_summary["detected_frames"] = detected_frames
+            logger.info(f"Video detections: {result_summary['video_detections']}")
+
+        elif suffix.lower() in [".mp3", ".wav", ".m4a"]:
+            transcription = speech_model.transcribe(temp_path)
+            result_summary["audio_transcription"] = transcription['text']
+            logger.info(f"Transcription: {transcription['text']}")
+
+        # 🧠 GPT INCIDENT SUMMARY
+        summary_prompt = f"""
+        You are an AI assistant summarizing conflict reports. Here's the report:
+        Description: {result_summary.get('description', '')}
+        Detections: {result_summary.get('image_detections') or result_summary.get('video_detections')}
+        Transcription: {result_summary.get('audio_transcription', '')}
+
+        Summarize the incident in 2-3 lines for a human rights officer.
+        """
+        try:
+            summary_response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that summarizes community safety incidents."},
+                    {"role": "user", "content": summary_prompt}
+                ]
+            )
+            summary = summary_response.choices[0].message.content.strip()
+            result_summary["gpt_summary"] = summary
+            logger.info("✅ GPT summary generated.")
+        except Exception as gpt_err:
+            logger.warning(f"GPT summary error: {gpt_err}")
+            result_summary["gpt_summary"] = f"⚠️ GPT summarization failed: {str(gpt_err)}"
+
+        # 🧭 GPT USER GUIDANCE
+        guidance_prompt = f"""
+        Based on the following report, offer guidance for a civilian:
+        - Description: {result_summary.get('description', '')}
+        - Detections: {result_summary.get('image_detections') or result_summary.get('video_detections')}
+        - Transcription: {result_summary.get('audio_transcription', '')}
+        - Summary: {result_summary.get('gpt_summary', '')}
+
+        Help the user understand:
+        1. What this summary means.
+        2. Why legal terms like \"allegedly\" are used.
+        3. What more evidence (photo, timestamp, location) could help.
+        4. Whether they should report this to authorities or not.
+
+        Return helpful, plain-language advice.
+        """
+        try:
+            guidance_response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You help people understand safety reports and give next-step advice."},
+                    {"role": "user", "content": guidance_prompt}
+                ]
+            )
+            guidance = guidance_response.choices[0].message.content.strip()
+            result_summary["user_guidance"] = guidance
+            logger.info("✅ User guidance generated.")
+        except Exception as gpt_guidance_err:
+            logger.warning(f"GPT guidance error: {gpt_guidance_err}")
+            result_summary["user_guidance"] = f"⚠️ Guidance generation failed: {str(gpt_guidance_err)}"
+
+    except Exception as e:
+        logger.error(f"Error processing file: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    return result_summary

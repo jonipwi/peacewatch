@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PeaceWatch AI</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 2rem;
+      background-color: #f6f9fc;
+    }
+
+    h1 {
+      color: #2c3e50;
+    }
+
+    label {
+      font-weight: bold;
+    }
+
+    textarea, input[type="file"] {
+      width: 100%;
+      margin-bottom: 1rem;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .result-section {
+      margin-top: 2rem;
+      background: #ffffff;
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .frame-preview {
+      margin-top: 1rem;
+      max-width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    .frames-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h1>PeaceWatch AI - Conflict Monitor</h1>
+
+  <form id="uploadForm" enctype="multipart/form-data">
+    <label for="description">Incident Description:</label><br>
+    <textarea name="description" rows="3" placeholder="e.g. A man threw a stone at my dog and wife."></textarea><br>
+
+    <label for="file">Upload Image, Video, or Audio:</label><br>
+    <input type="file" name="file" required><br>
+
+    <button type="submit">🔍 Analyze</button>
+  </form>
+
+  <div class="result-section" id="results" style="display:none;">
+    <h2>🧠 AI Summary</h2>
+    <p id="summaryText"></p>
+
+    <h3>🧭 Guidance for You</h3>
+    <p id="guidanceText"></p>
+
+    <h3>🎞️ Frame Previews (If Video)</h3>
+    <div id="framesContainer" class="frames-grid"></div>
+
+    <h3>📦 Raw JSON Result</h3>
+    <pre id="resultBox"></pre>
+  </div>
+
+  <script>
+    document.getElementById("uploadForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData(form);
+
+      const response = await fetch("http://127.0.0.1:8000/analyze", {
+        method: "POST",
+        body: formData
+      });
+
+      const result = await response.json();
+
+      // Show raw JSON result
+      document.getElementById("resultBox").textContent = JSON.stringify(result, null, 2);
+
+      // Display summary and guidance
+      document.getElementById("summaryText").textContent = result.gpt_summary || "No summary available.";
+      document.getElementById("guidanceText").textContent = result.user_guidance || "No guidance available.";
+
+      // Clear old frames
+      const framesContainer = document.getElementById("framesContainer");
+      framesContainer.innerHTML = "";
+
+      // Show multiple detected frames
+      if (result.detected_frames && Array.isArray(result.detected_frames)) {
+        result.detected_frames.forEach(frame => {
+          const container = document.createElement("div");
+          container.style.position = "relative";
+
+          const img = document.createElement("img");
+          img.src = frame.url;
+          img.className = "frame-preview";
+          container.appendChild(img);
+
+          if (frame.detections.includes("person")) {
+            const badge = document.createElement("div");
+            badge.textContent = "👤 Person detected";
+            badge.style.position = "absolute";
+            badge.style.top = "8px";
+            badge.style.left = "8px";
+            badge.style.backgroundColor = "red";
+            badge.style.color = "white";
+            badge.style.padding = "2px 6px";
+            badge.style.borderRadius = "4px";
+            container.appendChild(badge);
+          }
+
+          framesContainer.appendChild(container);
+        });
+      }
+
+      // Show result section
+      document.getElementById("results").style.display = "block";
+    };
+  </script>
+</body>
+</html>
