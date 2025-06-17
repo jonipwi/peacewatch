@@ -11,4 +11,7 @@ py -3.10 -m venv venv
 #pip install ultralytics
 #pip install fastapi uvicorn python-multipart ffmpeg-python openai
 
-uvicorn peacewatch_ai_backend:app --reload
+#uvicorn peacewatch_ai_backend:app --reload
+
+pip install torch pillow pytesseract flask transformers openai python-dotenv
+python whatsapp-analyze.py

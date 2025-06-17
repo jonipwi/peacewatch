@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PeaceWatch Results</title>
+  <style>
+    body { font-family: Arial; background: #f4f4f4; padding: 2rem; }
+    .card { background: #fff; margin: 1rem 0; padding: 1rem; border-radius: 8px; box-shadow: 0 0 6px #ccc; }
+    .danger { color: red; font-weight: bold; }
+    img { max-width: 300px; border: 1px solid #ddd; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>🕊️ PeaceWatch Threat Report</h1>
+  {% for item in logs %}
+  <div class="card">
+    <h3>{{ item.filename }}</h3>
+    <p><strong>Text:</strong> {{ item.text }}</p>
+    <p><strong>Toxicity:</strong> {{ item.toxicity.label }} ({{ item.toxicity.score }})</p>
+    <p><strong>Threat Detected:</strong> <span class="{{ 'danger' if item.threat else '' }}">{{ 'Yes' if item.threat else 'No' }}</span></p>
+    <p><strong>OpenAI Insight:</strong> {{ item.openai_insight }}</p>
+    {% if item.threat %}
+      <img src="/static/images/{{ item.filename }}" alt="Threat image">
+    {% endif %}
+  </div>
+  {% endfor %}
+</body>
+</html>
