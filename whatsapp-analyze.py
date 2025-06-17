@@ -11,11 +11,12 @@ from datetime import datetime
 # ---- Configurations ---- #
 SCREENSHOT_FOLDER = "./proof-of-threat"
 LOG_FILE = "./logs/result_log.json"
+TEXT_LOG_FILE = "./logs/text.log"
 OUTPUT_IMAGE_FOLDER = "./static/images"
 os.makedirs(OUTPUT_IMAGE_FOLDER, exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
-# OpenAI API key (ensure it's set in your environment)
+# Set your OpenAI API Key in environment before running
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # ---- Initialize AI Models ---- #
@@ -24,6 +25,7 @@ threat_detector = pipeline("text-classification", model="unitary/toxic-bert")
 print("Model loaded.")
 
 results = []
+
 for file in os.listdir(SCREENSHOT_FOLDER):
     if file.lower().endswith((".png", ".jpg", ".jpeg")):
         img_path = os.path.join(SCREENSHOT_FOLDER, file)
@@ -31,6 +33,10 @@ for file in os.listdir(SCREENSHOT_FOLDER):
 
         text = pytesseract.image_to_string(Image.open(img_path), lang='ind').strip()
         print("📜 Extracted Text:", text)
+
+        # Save raw text for all images
+        with open(TEXT_LOG_FILE, "a", encoding="utf-8") as tf:
+            tf.write(f"\n--- {file} ---\n{text}\n")
 
         if not text:
             print("❌ No text found, skipping.")
@@ -40,7 +46,7 @@ for file in os.listdir(SCREENSHOT_FOLDER):
         print("🤖 Toxicity Analysis:", analysis)
 
         try:
-            # Emotional impact analysis with family defense
+            # GPT-4o analysis
             emotion_response = openai.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -62,9 +68,8 @@ Does this message contribute to mental distress or social discrimination? Provid
 """}
                 ]
             )
-            emotional_impact = emotion_response.choices[0].message.content
+            emotional_impact = emotion_response.choices[0].message.content.strip()
 
-            # Victim detection
             victim_response = openai.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -72,9 +77,8 @@ Does this message contribute to mental distress or social discrimination? Provid
                     {"role": "user", "content": text}
                 ]
             )
-            victim_detected = victim_response.choices[0].message.content
+            victim_detected = victim_response.choices[0].message.content.strip()
 
-            # Legal-style summary
             legal_response = openai.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -95,12 +99,31 @@ Please generate a short legal-style summary: who is responsible for any verbal h
 """}
                 ]
             )
-            legal_summary = legal_response.choices[0].message.content
+            legal_summary = legal_response.choices[0].message.content.strip()
+
+            # Additional check: any confession of unlawful action (like throwing stone)?
+            confession_response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an investigator. Check whether the message contains a confession of unlawful acts, especially aggression like 'throwing stone'."},
+                    {"role": "user", "content": f"""
+Does the following message include a confession of aggression or unlawful behavior?
+
+Text:
+{text}
+
+Return "YES" if someone confesses to throwing stones or committing violence. Return "NO" otherwise.
+"""}
+                ]
+            )
+            confession_text = confession_response.choices[0].message.content.strip()
+            is_unlawful = "YES" in confession_text.upper()
 
         except Exception as e:
             emotional_impact = f"OpenAI Error: {e}"
             victim_detected = "OpenAI Error"
             legal_summary = "OpenAI Error"
+            is_unlawful = False
 
         toxic = [res for res in analysis if "toxic" in res['label'].lower()]
 
@@ -116,16 +139,18 @@ Please generate a short legal-style summary: who is responsible for any verbal h
                 "label": toxic[0]['label'],
                 "emotional_impact": emotional_impact,
                 "victim": victim_detected,
-                "legal_summary": legal_summary
+                "legal_summary": legal_summary,
+                "is_unlawful": is_unlawful
             }
             results.append(result)
         else:
             print("✅ Message seems safe.")
 
-# Save logs
+# Save final log
 with open(LOG_FILE, "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"\n📝 Log saved to {LOG_FILE}")
+    print(f"📂 OCR text saved to {TEXT_LOG_FILE}")
 
 # ---- Flask Server ---- #
 app = Flask(__name__)

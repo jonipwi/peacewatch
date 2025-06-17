@@ -1,28 +1,76 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>PeaceWatch Results</title>
-  <style>
-    body { font-family: Arial; background: #f4f4f4; padding: 2rem; }
-    .card { background: #fff; margin: 1rem 0; padding: 1rem; border-radius: 8px; box-shadow: 0 0 6px #ccc; }
-    .danger { color: red; font-weight: bold; }
-    img { max-width: 300px; border: 1px solid #ddd; margin-top: 1rem; }
-  </style>
+    <meta charset="UTF-8">
+    <title>PeaceWatch Results</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #f9f9f9;
+            padding: 2rem;
+        }
+        .card {
+            background: white;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            border-left: 6px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .unlawful {
+            border-left-color: red;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        img {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+        pre {
+            background: #f0f0f0;
+            padding: 1rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .label {
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-  <h1>🕊️ PeaceWatch Threat Report</h1>
-  {% for item in logs %}
-  <div class="card">
-    <h3>{{ item.filename }}</h3>
-    <p><strong>Text:</strong> {{ item.text }}</p>
-    <p><strong>Toxicity:</strong> {{ item.toxicity.label }} ({{ item.toxicity.score }})</p>
-    <p><strong>Threat Detected:</strong> <span class="{{ 'danger' if item.threat else '' }}">{{ 'Yes' if item.threat else 'No' }}</span></p>
-    <p><strong>OpenAI Insight:</strong> {{ item.openai_insight }}</p>
-    {% if item.threat %}
-      <img src="/static/images/{{ item.filename }}" alt="Threat image">
+    <h1>🚨 PeaceWatch AI: Threat Analysis Results</h1>
+
+    {% if logs %}
+        {% for log in logs %}
+            <div class="card {% if log.is_unlawful %}unlawful{% endif %}">
+                <h3>
+                    📂 {{ log.filename }} 
+                    — <span style="color:{{ 'red' if log.score > 0.7 else 'green' }}">{{ log.label }} ({{ log.score }})</span>
+                    {% if log.is_unlawful %}
+                        <span style="color:red; font-weight:bold;">⚠️ UNLAWFUL CONFESSION DETECTED</span>
+                    {% endif %}
+                </h3>
+
+                <img src="/static/images/{{ log.filename }}" alt="Screenshot from chat">
+
+                <p class="label">📝 Extracted Text:</p>
+                <pre>{{ log.text }}</pre>
+
+                <p class="label">🧠 Emotional Impact:</p>
+                <pre>{{ log.emotional_impact }}</pre>
+
+                <p class="label">🎯 Victim(s):</p>
+                <pre>{{ log.victim }}</pre>
+
+                <p class="label">⚖️ Legal Summary:</p>
+                <pre>{{ log.legal_summary }}</pre>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No threats detected yet.</p>
     {% endif %}
-  </div>
-  {% endfor %}
 </body>
 </html>
